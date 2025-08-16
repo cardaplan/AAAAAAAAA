@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rastreio do Pedido</title>
+<style>
+    :root{
+        --bg:#0f1220;--card:#151a2e;--text:#e6e8ef;--muted:#9aa0b4;--primary:#6c8cff;--success:#22c55e;--warning:#f59e0b;--accent:#ff6b6b;--shadow:rgba(0,0,0,.35)
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 800px at 20% -10%,rgba(108,140,255,.15),transparent),radial-gradient(1200px 800px at 120% 110%,rgba(34,197,94,.12),transparent),var(--bg);color:var(--text);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .container{width:100%;max-width:860px}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand-logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--primary),#9b8cff);box-shadow:0 10px 30px rgba(108,140,255,.3)}
+    .brand-name{font-weight:800;letter-spacing:.3px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));border:1px solid rgba(255,255,255,.06);backdrop-filter:blur(6px);border-radius:20px;box-shadow:0 20px 50px var(--shadow)}
+    .hero{padding:28px 24px 8px}
+    .hero h1{margin:0 0 8px;font-size:20px}
+    .sub{color:var(--muted);font-size:14px}
+    .status-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:24px}
+    .step{position:relative;padding:16px;border-radius:16px;background:var(--card);border:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:12px}
+    .step .icon{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:rgba(255,255,255,.06)}
+    .step .label{font-weight:600;font-size:14px}
+    .step .dot{position:absolute;top:-8px;right:-8px;width:12px;height:12px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 0 rgba(108,140,255,.7);animation:pulse 1.6s infinite}
+    @keyframes pulse{0%{transform:scale(.9);box-shadow:0 0 0 0 rgba(108,140,255,.7)}70%{transform:scale(1);box-shadow:0 0 0 12px rgba(108,140,255,0)}100%{transform:scale(.9);box-shadow:0 0 0 0 rgba(108,140,255,0)}}
+    .meta{display:flex;flex-wrap:wrap;gap:12px;padding:0 24px 24px}
+    .pill{padding:10px 12px;background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:12px;font-size:13px;color:var(--muted)}
+    .footer{padding:16px 24px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center}
+    .btn{background:var(--primary);color:#fff;border:none;border-radius:12px;padding:10px 14px;font-weight:700;box-shadow:0 10px 24px rgba(108,140,255,.35);cursor:pointer}
+    .hint{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="header">
+      <div class="brand">
+        <div class="brand-logo"></div>
+        <div>
+          <div class="brand-name">Rastreio de Pedido</div>
+          <div class="hint">Acompanhe o andamento do seu pedido em tempo real</div>
+        </div>
+      </div>
+      <button class="btn" id="refreshBtn">Atualizar</button>
+    </div>
+
+    <div class="hero">
+      <h1 id="orderTitle">Pedido <span id="orderId">...</span></h1>
+      <div class="sub" id="orderSub">Carregando informações...</div>
+    </div>
+
+    <div class="status-rail" id="statusRail">
+      <!-- steps injected by JS -->
+    </div>
+
+    <div class="meta" id="metaInfo">
+      <div class="pill" id="pillWhen">⏰ —</div>
+      <div class="pill" id="pillType">📍 —</div>
+      <div class="pill" id="pillTotal">💰 —</div>
+    </div>
+
+    <div class="footer">
+      <div class="hint">Se tiver dúvidas, entre em contato com o estabelecimento.</div>
+      <a class="btn" id="whatsBtn" target="_blank" rel="noopener">Falar no WhatsApp</a>
+    </div>
+  </div>
+</div>
+<script>
+  const APP_SCRIPT_ORDERS_URL = '';
+  const params = new URLSearchParams(location.search);
+  const orderId = params.get('id') || '';
+  const statusSteps = [
+    { key: 'Pedido criado', label: 'Pedido criado 🕑', icon: '🕑' },
+    { key: 'Pedido confirmado', label: 'Pedido confirmado ☑️', icon: '☑️' },
+    { key: 'Em preparação', label: 'Em preparação 👨‍🍳', icon: '👨‍🍳' },
+    { key: 'Saiu para entrega', label: 'Saiu para entrega 🚗💨', icon: '🚗' },
+    { key: 'Entregue', label: 'Entregue ✅', icon: '✅' },
+  ];
+
+  document.getElementById('orderId').textContent = orderId || '—';
+  document.getElementById('refreshBtn').addEventListener('click', load);
+
+  async function load() {
+    if (!APP_SCRIPT_ORDERS_URL || !orderId) {
+      document.getElementById('orderSub').textContent = 'Preencha APP_SCRIPT_ORDERS_URL e o parâmetro ?id=.';
+      renderSteps('Pedido criado');
+      return;
+    }
+    try {
+      const url = `${APP_SCRIPT_ORDERS_URL}?action=getOrder&id=${encodeURIComponent(orderId)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data || !data.order) {
+        document.getElementById('orderSub').textContent = 'Pedido não encontrado.';
+        renderSteps('Pedido criado');
+        return;
+      }
+      const o = data.order;
+      document.getElementById('orderSub').textContent = `${o.status} • ${new Date(o.data_hora).toLocaleString('pt-BR')}`;
+      document.getElementById('pillWhen').textContent = `⏰ ${new Date(o.data_hora).toLocaleString('pt-BR')}`;
+      document.getElementById('pillType').textContent = `📍 ${o.tipo_entrega || '-'}`;
+      document.getElementById('pillTotal').textContent = `💰 R$ ${(parseFloat(o.total||0)).toFixed(2)}`;
+      const whatsapp = o.whatsapp ? String(o.whatsapp).replace(/\D/g,'') : '';
+      const wbtn = document.getElementById('whatsBtn');
+      if (whatsapp) {
+        wbtn.href = `https://wa.me/${whatsapp}`;
+      } else {
+        wbtn.style.display = 'none';
+      }
+      renderSteps(o.status || 'Pedido criado');
+    } catch (e) {
+      document.getElementById('orderSub').textContent = 'Erro ao consultar status.';
+      renderSteps('Pedido criado');
+    }
+  }
+
+  function renderSteps(current) {
+    const rail = document.getElementById('statusRail');
+    rail.innerHTML = statusSteps.map(s => `
+      <div class="step">
+        <div class="icon">${s.icon}</div>
+        <div>
+          <div class="label">${s.label}</div>
+        </div>
+        ${s.key === current ? '<div class="dot"></div>' : ''}
+      </div>
+    `).join('');
+  }
+
+  load();
+</script>
+</body>
+</html>
