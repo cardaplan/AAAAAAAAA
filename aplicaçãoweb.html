@@ -1400,6 +1400,11 @@ html, body {
                             <div class="action-title">Horários</div>
                             <div class="action-subtitle">Configurar funcionamento</div>
                         </div>
+                        <div class="action-card" onclick="showScreen('pedidosScreen')">
+                            <div class="action-icon">🔔</div>
+                            <div class="action-title">Pedidos</div>
+                            <div class="action-subtitle">Acompanhar pedidos</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1626,6 +1631,28 @@ html, body {
                 </div>
             </div>
 
+            <!-- Pedidos Screen -->
+            <div class="screen" id="pedidosScreen">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title">Pedidos 🔔</h2>
+                        <div class="section-subtitle">Gerencie pedidos do cardápio</div>
+                    </div>
+                </div>
+
+                <div class="filter-bar">
+                    <input type="text" class="filter-input" placeholder="Buscar por ID do pedido..." id="pedidosFilter" oninput="filterPedidosById()">
+                    <div class="filter-count" id="pedidosCount">0 pedidos</div>
+                </div>
+
+                <div class="items-list" id="pedidosList"></div>
+                <div class="empty-state hidden" id="pedidosEmpty">
+                    <div class="empty-icon">🔔</div>
+                    <div class="empty-title">Nenhum pedido encontrado</div>
+                    <div class="empty-subtitle">Pedidos aparecerão aqui quando enviados pelo cardápio</div>
+                </div>
+            </div>
+
 
 
 
@@ -1663,6 +1690,10 @@ html, body {
                 <div class="nav-item" onclick="showScreen('horariosScreen')">
                     <div class="nav-icon">🕐</div>
                     <div class="nav-label">Horários</div>
+                </div>
+                <div class="nav-item" onclick="showScreen('pedidosScreen')">
+                    <div class="nav-icon">🔔</div>
+                    <div class="nav-label">Pedidos</div>
                 </div>
 
             </div>
@@ -1821,6 +1852,7 @@ function loadInitialData() {
                 'configScreen': 4,
                 'bairrosScreen': 5,
                 'horariosScreen': 6,
+                'pedidosScreen': 7,
 
             };
             
@@ -1838,6 +1870,7 @@ function loadInitialData() {
             populateConfig();
             populateBairros();
             populateHorarios();
+            populatePedidos();
         }
 
         // Populate items screen
@@ -3249,6 +3282,185 @@ function setupFilters() {
         })
         .verificarCliente(email);
 }
+
+        async function populatePedidos(sourceData) {
+            const container = document.getElementById('pedidosList');
+            const emptyState = document.getElementById('pedidosEmpty');
+            const countElement = document.getElementById('pedidosCount');
+            try {
+                const orders = await fetchOrders();
+                if (!orders || orders.length === 0) {
+                    container.innerHTML = '';
+                    emptyState.classList.remove('hidden');
+                    countElement.textContent = '0 pedidos';
+                    return;
+                }
+                emptyState.classList.add('hidden');
+                countElement.textContent = `${orders.length} pedidos`;
+                container.innerHTML = orders.map(renderPedidoCard).join('');
+            } catch (e) {
+                showToast('Erro ao carregar pedidos: ' + e.message, 'error');
+                container.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                countElement.textContent = '0 pedidos';
+            }
+        }
+
+        function renderPedidoCard(p) {
+            const enderecoResumo = safeEnderecoResumo(p.endereco);
+            const dataHora = p.data_hora ? new Date(p.data_hora).toLocaleString('pt-BR') : '';
+            return `
+                <div class="item-card" onclick="openPedido('${p.id}')">
+                    <div class="item-header">
+                        <div class="item-info">
+                            <div class="item-title">${p.nome || 'Cliente'}</div>
+                            <div class="item-subtitle">ID: ${p.id}</div>
+                            <div class="item-meta">
+                                <div class="item-badge ${p.status === 'Entregue' ? 'status-active' : ''}">${p.status || 'pendente'}</div>
+                                ${enderecoResumo ? `<span style=\"color: var(--text-tertiary);\">${enderecoResumo}</span>` : ''}
+                                ${dataHora ? `<span style=\"color: var(--text-tertiary);\">${dataHora}</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="item-actions">
+                            <button class="item-action edit" onclick="event.stopPropagation(); openPedido('${p.id}')" title="Detalhes">🔎</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function safeEnderecoResumo(endereco) {
+            try {
+                if (!endereco) return '';
+                let obj = endereco;
+                if (typeof endereco === 'string') obj = JSON.parse(endereco);
+                const partes = [obj.street, obj.number, obj.neighborhood, obj.city].filter(Boolean);
+                return partes.join(', ');
+            } catch (_) { return ''; }
+        }
+
+        function fetchOrders() {
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(resolve)
+                    .withFailureHandler(reject)
+                    .listOrders();
+            });
+        }
+
+        function getOrdersApiUrl(action, params = {}) {
+            if (!window.currentConfigs || !window.currentConfigs.Config) return '';
+            const base = (window.currentConfigs.ConfigBaseURL || '').toString();
+            // Como não temos a URL no config da UI, assuma uso direto do APP_SCRIPT_ORDERS_URL via variável global
+            const search = new URLSearchParams({ action, ...params }).toString();
+            return `${(window.APP_SCRIPT_ORDERS_URL || '')}?${search}`;
+        }
+
+        function filterPedidosById() {
+            const q = document.getElementById('pedidosFilter').value.trim();
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(orders => {
+                        const container = document.getElementById('pedidosList');
+                        const emptyState = document.getElementById('pedidosEmpty');
+                        const countElement = document.getElementById('pedidosCount');
+                        if (!orders || orders.length === 0) {
+                            container.innerHTML = '';
+                            emptyState.classList.remove('hidden');
+                            countElement.textContent = '0 pedidos';
+                            resolve();
+                            return;
+                        }
+                        emptyState.classList.add('hidden');
+                        countElement.textContent = `${orders.length} pedidos`;
+                        container.innerHTML = orders.map(renderPedidoCard).join('');
+                        resolve();
+                    })
+                    .withFailureHandler(reject)
+                    .searchOrdersById(q);
+            });
+        }
+
+        function openPedido(id) {
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(data => {
+                        if (!data || !data.order) {
+                            showToast('Pedido não encontrado', 'error');
+                            resolve();
+                            return;
+                        }
+                        showPedidoModal(data.order, data.itens || []);
+                        resolve();
+                    })
+                    .withFailureHandler(err => {
+                        showToast('Erro ao carregar pedido: ' + err.message, 'error');
+                        reject(err);
+                    })
+                    .getOrderById(id);
+            });
+        }
+
+        function showPedidoModal(order, itens) {
+            const modal = document.getElementById('modal');
+            const modalOverlay = document.getElementById('modalOverlay');
+            const statusSteps = [
+                { key: 'Pedido criado', label: 'Pedido criado 🕑' },
+                { key: 'Pedido confirmado', label: 'Pedido confirmado ☑️' },
+                { key: 'Em preparação', label: 'Em preparação 👨‍🍳' },
+                { key: 'Saiu para entrega', label: 'Saiu para entrega 🚗💨' },
+                { key: 'Entregue', label: 'Entregue ✅' }
+            ];
+            const stepsHtml = statusSteps.map(s => `
+                <button class="btn ${order.status === s.key ? 'btn-primary' : ''}" style="margin: 4px 6px;" onclick="updatePedidoStatus('${order.id}','${s.key}')">${s.label}</button>
+            `).join('');
+            const itensHtml = itens.map(i => `
+                <div class="item-card">
+                    <div class="item-header">
+                        <div class="item-info">
+                            <div class="item-title">${i.nome}</div>
+                            <div class="item-subtitle">SKU: ${i.sku}</div>
+                        </div>
+                        <div class="item-price">Qtd: ${i.quantidade} — R$ ${parseFloat(i.subtotal || 0).toFixed(2)}</div>
+                    </div>
+                </div>
+            `).join('');
+            modal.innerHTML = `
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title">Pedido ${order.id}</h2>
+                        <div class="section-subtitle">${safeEnderecoResumo(order.endereco)}</div>
+                    </div>
+                    <button class="btn" onclick="closeModal(event)">Fechar</button>
+                </div>
+                <div style="margin-bottom: 16px;">Status atual: <strong>${order.status}</strong></div>
+                <div style="display:flex; flex-wrap: wrap;">${stepsHtml}</div>
+                <div class="section-title" style="margin-top: 16px;">Itens</div>
+                <div class="items-list">${itensHtml || '<div class="empty-state">Sem itens</div>'}</div>
+            `;
+            modalOverlay.style.display = 'flex';
+        }
+
+        function updatePedidoStatus(id, status) {
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(json => {
+                        if (json && json.success) {
+                            showToast('Status atualizado!', 'success');
+                            populatePedidos();
+                            resolve();
+                        } else {
+                            showToast('Falha ao atualizar status', 'error');
+                            resolve();
+                        }
+                    })
+                    .withFailureHandler(err => {
+                        showToast('Erro ao atualizar status: ' + err.message, 'error');
+                        reject(err);
+                    })
+                    .updateOrderStatus(id, status);
+            });
+        }
 
     </script>
 </body>

@@ -105,8 +105,11 @@ const cache = {
 /**
  * Função principal para servir a aplicação web
  */
-function doGet() {
+function doGet(e) {
   try {
+    if (e && e.parameter && e.parameter.action) {
+      return doGetApi(e);
+    }
     Logger.log('[doGet] Iniciando aplicação web');
     
     const htmlOutput = HtmlService.createHtmlOutputFromFile("Index")
@@ -1270,5 +1273,194 @@ function fazerLogin() {
             msg.textContent = "Erro no login: " + err.message;
         })
         .verificarCliente(email);
+}
+
+/**
+ * =====================
+ * PEDIDOS (Orders API)
+ * =====================
+ * Abas exigidas na planilha principal (SPREADSHEET_ID):
+ * - Pedidos: id, nome, whatsapp, endereco, tipo_entrega, data_hora, total, status
+ * - PedidoItens: pedido_id, sku, nome, quantidade, preco, subtotal, variacoes, observacoes
+ */
+function ensureOrdersSheets() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  if (!ss.getSheetByName('Pedidos')) {
+    const s = ss.insertSheet('Pedidos');
+    s.appendRow(['id', 'nome', 'whatsapp', 'endereco', 'tipo_entrega', 'data_hora', 'total', 'status']);
+  }
+  if (!ss.getSheetByName('PedidoItens')) {
+    const s2 = ss.insertSheet('PedidoItens');
+    s2.appendRow(['pedido_id', 'sku', 'nome', 'quantidade', 'preco', 'subtotal', 'variacoes', 'observacoes']);
+  }
+}
+
+function saveOrder(orderPayload) {
+  ensureOrdersSheets();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const pedidos = ss.getSheetByName('Pedidos');
+  const itens = ss.getSheetByName('PedidoItens');
+
+  const id = orderPayload.id || generateOrderId();
+  const nome = orderPayload.customer?.name || orderPayload.customer_name || '';
+  const whatsapp = orderPayload.whatsapp_customer || '';
+  const deliveryType = orderPayload.customer?.delivery_type || orderPayload.delivery_type || '';
+  const enderecoObj = orderPayload.customer?.address || null;
+  const endereco = enderecoObj ? JSON.stringify(enderecoObj) : '';
+  const total = Number(orderPayload.totals?.total_final_numeric || orderPayload.total || 0);
+  const dataHora = new Date();
+  const status = 'Pedido criado';
+
+  pedidos.appendRow([id, nome, whatsapp, endereco, deliveryType, dataHora, total, status]);
+
+  const listaItens = orderPayload.items || [];
+  listaItens.forEach(item => {
+    const sku = item.sku || '';
+    const nomeItem = item.name || '';
+    const qtd = Number(item.quantity || 0);
+    const preco = Number(item.price_numeric || 0);
+    const subtotal = Number(item.subtotal_numeric || 0);
+    const variacoes = item.variations_text || '';
+    const obs = item.notes || '';
+    itens.appendRow([id, sku, nomeItem, qtd, preco, subtotal, variacoes, obs]);
+  });
+
+  return { success: true, id };
+}
+
+function generateOrderId() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const rand = Math.floor(Math.random() * 9000) + 1000;
+  return `PD-${yyyy}${mm}${dd}-${hh}${mi}${ss}-${rand}`;
+}
+
+function listOrders() {
+  ensureOrdersSheets();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Pedidos');
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return [];
+  const rows = values.slice(1).map(r => ({
+    id: r[0],
+    nome: r[1],
+    whatsapp: r[2],
+    endereco: r[3],
+    tipo_entrega: r[4],
+    data_hora: r[5],
+    total: r[6],
+    status: r[7]
+  }));
+  return rows.sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora));
+}
+
+function getOrderById(id) {
+  ensureOrdersSheets();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const pedidos = ss.getSheetByName('Pedidos').getDataRange().getValues();
+  const itensSheet = ss.getSheetByName('PedidoItens').getDataRange().getValues();
+
+  const headerP = pedidos[0];
+  const mapP = pedidos.slice(1).find(r => String(r[0]) === String(id));
+  if (!mapP) return null;
+  const order = {
+    id: mapP[0],
+    nome: mapP[1],
+    whatsapp: mapP[2],
+    endereco: mapP[3],
+    tipo_entrega: mapP[4],
+    data_hora: mapP[5],
+    total: mapP[6],
+    status: mapP[7]
+  };
+
+  const itens = itensSheet.slice(1)
+    .filter(r => String(r[0]) === String(id))
+    .map(r => ({ sku: r[1], nome: r[2], quantidade: r[3], preco: r[4], subtotal: r[5], variacoes: r[6], observacoes: r[7] }));
+
+  return { order, itens };
+}
+
+function updateOrderStatus(id, status) {
+  ensureOrdersSheets();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Pedidos');
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]) === String(id)) {
+      sheet.getRange(i + 1, 8).setValue(status);
+      return { success: true };
+    }
+  }
+  return { success: false, error: 'Pedido não encontrado' };
+}
+
+function searchOrdersById(partialId) {
+  const all = listOrders();
+  if (!partialId) return all;
+  const q = String(partialId).toLowerCase();
+  return all.filter(p => String(p.id).toLowerCase().includes(q));
+}
+
+/**
+ * API JSON (exec): permite registrar pedido, consultar pedido e atualizar status.
+ * Parâmetros:
+ * - action: 'saveOrder' | 'getOrder' | 'listOrders' | 'updateStatus' | 'searchOrders'
+ * - id: ID do pedido (quando aplicável)
+ * - status: novo status (quando aplicável)
+ * - data: JSON com payload do pedido (quando aplicável)
+ */
+function doGetApi(e) {
+  if (!e || !e.parameter || !e.parameter.action) {
+    // Fallback para UI normal
+    try {
+      Logger.log('[doGet] Iniciando aplicação web');
+      const htmlOutput = HtmlService.createHtmlOutputFromFile('Index')
+        .setTitle('Cardaplan - Gestão Inteligente')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+      Logger.log('[doGet] Aplicação web carregada com sucesso');
+      return htmlOutput;
+    } catch (error) {
+      Logger.log(`[doGet] ERRO: ${error.message}`);
+      return HtmlService.createHtmlOutput('<h1>Erro ao carregar a aplicação</h1><p>Tente novamente em alguns instantes.</p>');
+    }
+  }
+
+  const action = e.parameter.action;
+  try {
+    if (action === 'saveOrder') {
+      const data = e.parameter.data ? JSON.parse(e.parameter.data) : null;
+      const result = saveOrder(data || {});
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (action === 'getOrder') {
+      const id = e.parameter.id || '';
+      const result = getOrderById(id);
+      return ContentService.createTextOutput(JSON.stringify(result || { error: 'not_found' })).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (action === 'listOrders') {
+      const result = listOrders();
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (action === 'updateStatus') {
+      const id = e.parameter.id || '';
+      const status = e.parameter.status || '';
+      const result = updateOrderStatus(id, status);
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (action === 'searchOrders') {
+      const q = e.parameter.q || '';
+      const result = searchOrdersById(q);
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ error: 'invalid_action' })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: true, message: String(err) })).setMimeType(ContentService.MimeType.JSON);
+  }
 }
 

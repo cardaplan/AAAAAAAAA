@@ -303,3 +303,21 @@ const bairroVisible = true;  // Mostrar/ocultar BAIRRO
 //   - Apenas BAIRRO visível: cepVisible=false; cidadeVisible=false; bairroVisible=true
 //   - Todos ocultos: cepVisible=false; cidadeVisible=false; bairroVisible=false
 
+// ====================================================================
+// INTEGRAÇÕES DE PEDIDOS E RASTREIO
+// ====================================================================
+/**
+ * URL base pública da página de rastreio (Netlify ou similar)
+ * Ex.: 'https://seu-dominio.netlify.app/rastreio'
+ * Deixe vazio ('') para ocultar o link de rastreio no rodapé
+ */
+const TRACKING_BASE_URL = '';
+
+/**
+ * URL pública do Web App do Google Apps Script (deploy "exec")
+ * Usado para registrar pedidos e consultar status (API pública)
+ * Ex.: 'https://script.google.com/macros/s/AKfycbx.../exec'
+ * Deixe vazio ('') para desabilitar o registro automático de pedidos
+ */
+const APP_SCRIPT_ORDERS_URL = '';
+
